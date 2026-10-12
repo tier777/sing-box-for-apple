@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationLibrary
 import Combine
 import CoreText
 import Foundation
@@ -46,6 +47,10 @@ public class StatusBarController: NSObject, NSMenuDelegate {
     private var currentGroups: [OutboundGroup] = []
     private var isURLTestingAll = false
     private var urlTestingGroups = Set<String>()
+    private var routeItems: [NSMenuItem] = []
+    public weak var routeHealth: RouteHealthViewModel? {
+        didSet { buildMenu() }
+    }
 
     public init(environments: ExtensionEnvironments) {
         self.environments = environments
@@ -122,6 +127,9 @@ public class StatusBarController: NSObject, NSMenuDelegate {
         headerItem = NSMenuItem()
         headerItem!.view = headerView
         menu.addItem(headerItem!)
+
+        routeItems = []
+        refreshRouteItems()
 
         groupsItem = NSMenuItem(title: NSLocalizedString("Group", comment: ""), action: nil, keyEquivalent: "")
         groupsItem!.submenu = NSMenu()
@@ -484,6 +492,51 @@ public class StatusBarController: NSObject, NSMenuDelegate {
         }
     }
 
+    // Same status words and order as the main window, refreshed on every open.
+    private func refreshRouteItems() {
+        guard let menu, let headerItem, let model = routeHealth else { return }
+        routeItems.forEach { menu.removeItem($0) }
+        routeItems = []
+        var index = menu.index(of: headerItem) + 1
+        func add(_ item: NSMenuItem) {
+            menu.insertItem(item, at: index)
+            index += 1
+            routeItems.append(item)
+        }
+        add(.separator())
+        if model.isLeakBlocking {
+            let blocked = NSMenuItem(title: "Интернет приостановлен до восстановления VPN", action: nil, keyEquivalent: "")
+            blocked.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.white, .systemRed]))
+            blocked.isEnabled = false
+            add(blocked)
+        }
+        let entries = model.menuEntries
+        if !entries.isEmpty {
+            if #available(macOS 14.0, *) {
+                add(NSMenuItem.sectionHeader(title: "Подключения"))
+            }
+            for entry in entries {
+                let item = NSMenuItem(title: entry.name, action: #selector(openApp), keyEquivalent: "")
+                item.target = self
+                item.image = entry.image
+                if #available(macOS 14.0, *) {
+                    item.badge = NSMenuItemBadge(string: entry.status)
+                } else {
+                    item.title = "\(entry.name) — \(entry.status)"
+                }
+                add(item)
+            }
+            let check = NSMenuItem(title: "Проверить сейчас", action: #selector(checkRoutesNow), keyEquivalent: "r")
+            check.target = self
+            add(check)
+        }
+    }
+
+    @objc private func checkRoutesNow() {
+        routeHealth?.checkNow()
+    }
+
     @objc private func openApp() {
         NSApp.setActivationPolicy(.regular)
         if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
@@ -789,6 +842,7 @@ public class StatusBarController: NSObject, NSMenuDelegate {
 
     public func menuWillOpen(_: NSMenu) {
         headerView?.refresh()
+        refreshRouteItems()
         setStatusItemHighlighted(true)
         Task {
             await loadProfiles()

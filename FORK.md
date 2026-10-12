@@ -24,6 +24,31 @@ provisioning profile. It is ad-hoc signed, not a notarized public release.
   username when omitted, and accept visible text/number/tel OTP input. Real
   gateway sessions still require login and each server-requested OTP.
 
+## Leak protection
+
+On by default (Settings › VPN, or Overview › Routing). Starting a profile arms
+it; only switching the VPN off by hand disarms it. While armed, a pf anchor
+`com.apple/050.SFMRoutes` lets the controlling user's processes and
+`_mdnsresponder` send TCP/UDP only through the engine's own TUN interface and
+the on-link local network (DHCP, link-local, multicast, the Wi-Fi subnet).
+The root engine is not restricted, so it keeps reaching its servers and the
+DIRECT outbound for `.ru` and other direct rules.
+
+Engine failure, reload, profile switch, sleep/wake and a helper crash or
+reinstall all keep it armed: without a live tunnel the user's traffic and DNS
+are blocked instead of falling back to Wi-Fi or another VPN (for example the
+regular Tailscale or FortiClient apps, whose `utun` interfaces are never
+allowed). The rules live in the kernel, so they outlast the helper; a
+restarted helper re-applies the block and restores the last armed profile
+from its root-only state directory. The window shows "Интернет приостановлен"
+with a button to switch the VPN off.
+
+Limits: it does not cover other macOS user accounts or root/system daemons,
+traffic before the helper starts at boot, or DNS names the system resolver
+sends to a router on the local network while the tunnel is up (connections
+still go through the tunnel). `uninstall-local-engine.sh` removes the anchor
+and the pf reference.
+
 ## Local installation
 
 Open **SFM Routes.app**, press **Настроить локальный движок** and complete the

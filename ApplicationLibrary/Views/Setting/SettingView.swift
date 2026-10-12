@@ -168,6 +168,11 @@ public struct SettingView: View {
     public init() {}
     public var body: some View {
         FormView {
+            #if os(macOS)
+                if Variant.useLocalEngine {
+                    LeakProtectionSettingsSection()
+                }
+            #endif
             Section {
                 Tabs.app.navigationLink
                 Tabs.core.navigationLink

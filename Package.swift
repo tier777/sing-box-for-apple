@@ -7,7 +7,7 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [.library(name: "RouteHealthCore", targets: ["RouteHealthCore"])],
     targets: [
-        .target(name: "RouteHealthCore", path: "Library/Network", sources: ["RouteHealthState.swift"]),
+        .target(name: "RouteHealthCore", path: "Library/Network", sources: ["RouteHealthState.swift", "ProfileRulesDocument.swift"]),
         .testTarget(name: "RouteHealthCoreTests", dependencies: ["RouteHealthCore"], path: "Tests/RouteHealthCoreTests"),
     ]
 )
