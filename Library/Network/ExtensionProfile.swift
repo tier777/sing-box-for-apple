@@ -376,6 +376,11 @@ public class ExtensionProfile: ObservableObject {
     }
 
     public func restart() async throws {
+        #if os(macOS)
+        // Stop is the user's "VPN off" and disarms leak protection; a restart
+        // must replace the running profile in place instead.
+        if Variant.useLocalEngine { try await start(); return }
+        #endif
         try await stop()
         var waitSeconds = 0
         while status != .disconnected {

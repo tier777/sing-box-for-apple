@@ -9,6 +9,7 @@ public final class MacApplicationState: ObservableObject {
     @Published fileprivate var showMenuBarExtra = false
     @Published fileprivate var menuBarExtraSpeedMode = MenuBarExtraSpeedMode.enabled.rawValue
     fileprivate let environments = ExtensionEnvironments()
+    fileprivate let routeHealth = RouteHealthViewModel()
     fileprivate var statusBarController: StatusBarController?
 
     private var isInitialized = false
@@ -19,6 +20,7 @@ public final class MacApplicationState: ObservableObject {
         showMenuBarExtra = await SharedPreferences.showMenuBarExtra.get()
         menuBarExtraSpeedMode = await SharedPreferences.menuBarExtraSpeedMode.get()
         statusBarController = StatusBarController(environments: environments)
+        if Variant.useLocalEngine { statusBarController?.routeHealth = routeHealth }
         statusBarController?.updateVisibility(showMenuBarExtra)
         statusBarController?.updateSpeedMode(menuBarExtraSpeedMode)
     }
@@ -29,7 +31,6 @@ public struct MacApplication: Scene {
     @ObservedObject private var applicationState: MacApplicationState
     @StateObject private var peerStore = TailscaleSSHPeerStore()
     @StateObject private var tailscaleViewModel = TailscaleStatusViewModel()
-    @StateObject private var routeHealth = RouteHealthViewModel()
     @StateObject private var taildropSendManager = TaildropSendManager()
     @StateObject private var taildropInbox = TaildropInboxViewModel()
     @StateObject private var updateManager = UpdateManager()
@@ -49,7 +50,7 @@ public struct MacApplication: Scene {
                 .onAppear {
                     Task {
                         await initialize()
-                        routeHealth.start(environments: applicationState.environments, tailscale: tailscaleViewModel)
+                        applicationState.routeHealth.start(environments: applicationState.environments, tailscale: tailscaleViewModel)
                     }
                 }
                 .environment(\.showMenuBarExtra, $applicationState.showMenuBarExtra)
@@ -58,7 +59,7 @@ public struct MacApplication: Scene {
                 .environmentObject(applicationState.environments)
                 .environmentObject(peerStore)
                 .environmentObject(tailscaleViewModel)
-                .environmentObject(routeHealth)
+                .environmentObject(applicationState.routeHealth)
                 .environmentObject(taildropSendManager)
                 .environmentObject(taildropInbox)
                 .environmentObject(updateManager)
@@ -124,6 +125,7 @@ public struct MacApplication: Scene {
                 .keyboardShortcut(",", modifiers: [.command])
             }
         }
+        .defaultSize(width: Variant.useLocalEngine ? 1040 : 800, height: Variant.useLocalEngine ? 720 : 600)
 
         WindowGroup(for: EditProfileContentView.Context.self) { $context in
             EditProfileContentWindow(context: context)

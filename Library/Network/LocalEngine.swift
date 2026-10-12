@@ -27,6 +27,18 @@ public enum LocalEngine {
         defer { try? client.disconnect() }
         try client.localEngineStop()
     }
+    public static func leakProtection() throws -> LibboxLocalEngineLeakProtection {
+        guard isAvailable else { throw engineError("Локальный движок не установлен.") }
+        let client = LibboxNewStandaloneCommandClient()!
+        defer { try? client.disconnect() }
+        return try client.getLocalEngineLeakProtection()
+    }
+    public static func setLeakProtection(_ enabled: Bool) throws -> LibboxLocalEngineLeakProtection {
+        guard isAvailable else { throw engineError("Сначала настрой локальный движок на главной панели.") }
+        let client = LibboxNewStandaloneCommandClient()!
+        defer { try? client.disconnect() }
+        return try client.setLocalEngineLeakProtection(enabled)
+    }
     public static func wake() throws {
         guard isAvailable else { return }
         let client = LibboxNewStandaloneCommandClient()!

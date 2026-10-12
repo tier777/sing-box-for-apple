@@ -20,6 +20,11 @@ public final class RouteHealthViewModel: ObservableObject {
     @Published public var catalogError: String?
     @Published public var targets: [String: String] = [:]
     @Published public var installingEngine = false
+    @Published public private(set) var leakProtection: LeakProtectionInfo?
+    @Published public private(set) var leakProtectionError: String?
+    /// The installed helper predates leak protection and must be reinstalled.
+    @Published public private(set) var engineOutdated = false
+    private var lastLeakPoll = Date.distantPast
     public let openConnect = OpenConnectStatusViewModel()
     private weak var environments: ExtensionEnvironments?
     private weak var tailscale: TailscaleStatusViewModel?
@@ -105,6 +110,7 @@ public final class RouteHealthViewModel: ObservableObject {
     }
 
     public var enabled: Bool { environments?.extensionProfile?.status.isStarted == true }
+    public var currentClashMode: String { environments?.commandClient.clashMode ?? "" }
     #if os(macOS)
     public var needsEngineSetup: Bool { Variant.useLocalEngine && !LocalEngine.isAvailable }
     public func installEngine() {
@@ -116,7 +122,7 @@ public final class RouteHealthViewModel: ObservableObject {
                 try await Task.detached { try LocalEngine.install() }.value
                 for _ in 0..<15 {
                     if await Task.detached(operation: { (try? LocalEngine.state()) != nil }).value {
-                        catalogError = "Движок готов. Запусти выбранный профиль кнопкой Start."; return
+                        catalogError = "Движок готов. Включи VPN."; engineOutdated = false; pollLeakProtection(force: true); return
                     }
                     try await Task.sleep(nanoseconds: NSEC_PER_SEC)
                 }
@@ -132,6 +138,35 @@ public final class RouteHealthViewModel: ObservableObject {
     }
 
     public func tailscaleModel() -> TailscaleStatusViewModel? { tailscale }
+
+    private func pollLeakProtection(force: Bool = false) {
+        #if os(macOS)
+        guard Variant.useLocalEngine, LocalEngine.isAvailable, force || now.timeIntervalSince(lastLeakPoll) >= 2 else { return }
+        lastLeakPoll = now
+        Task {
+            let result = await Task.detached { Result { try LeakProtectionInfo(LocalEngine.leakProtection()) } }.value
+            switch result {
+            case let .success(value):
+                engineOutdated = false
+                if leakProtection != value { leakProtection = value }
+            case let .failure(error):
+                engineOutdated = "\(error)".contains("Unimplemented") || error.localizedDescription.contains("Unimplemented")
+            }
+        }
+        #endif
+    }
+
+    public func setLeakProtection(_ enabled: Bool) {
+        #if os(macOS)
+        Task {
+            let result = await Task.detached { Result { try LeakProtectionInfo(LocalEngine.setLeakProtection(enabled)) } }.value
+            switch result {
+            case let .success(value): leakProtection = value; leakProtectionError = nil
+            case let .failure(error): leakProtectionError = error.localizedDescription; pollLeakProtection(force: true)
+            }
+        }
+        #endif
+    }
 
     public func target(for route: RouteDescriptor) -> String {
         if let custom = targets[route.tag] { return custom }
@@ -244,6 +279,7 @@ public final class RouteHealthViewModel: ObservableObject {
 
     private func tick() {
         now = Date()
+        pollLeakProtection()
         let epoch = environments?.extensionProfile?.localEngineNetworkEpoch ?? 0
         if epoch != observedNetworkEpoch { observedNetworkEpoch = epoch; invalidate("Сеть движка перезапущена — нужны свежие проверки") }
         if enabled != wasEnabled {
@@ -291,5 +327,21 @@ public final class RouteHealthViewModel: ObservableObject {
                 lastProbeAt = now
             }
         }
+    }
+}
+
+public struct LeakProtectionInfo: Equatable, Sendable {
+    public let supported: Bool
+    public let enabled: Bool
+    // A profile was started and the user has not switched the VPN off.
+    public let armed: Bool
+    // Armed without a working tunnel: the user's traffic is blocked.
+    public let blocking: Bool
+    public let tunnel: String
+    public let error: String
+
+    init(_ value: LibboxLocalEngineLeakProtection) {
+        supported = value.supported; enabled = value.enabled; armed = value.armed
+        blocking = value.blocking; tunnel = value.tunnel; error = value.error
     }
 }

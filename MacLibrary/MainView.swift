@@ -57,19 +57,31 @@ public struct MainView: View {
         return screenshotDefaultPixelHeight / scale
     }
 
-    public var body: some View {
-        NavigationSplitView {
-            SidebarView(selection: $viewModel.selection)
-                .navigationSplitViewColumnWidth(150)
-        } detail: {
-            NavigationStack(path: $settingsNavigationPath) {
-                viewModel.selection.contentView
-                    .navigationTitle(viewModel.selection.title)
+    @ViewBuilder
+    private var splitView: some View {
+        if Variant.useLocalEngine {
+            RoutesSplitView(upstreamSelection: $viewModel.selection, settingsPath: $settingsNavigationPath)
+                .environment(\.cardConfigurationVersion, cardConfigurationVersion)
+                .environment(\.settingsNavigationPath, $settingsNavigationPath)
+                .frame(minWidth: 900)
+        } else {
+            NavigationSplitView {
+                SidebarView(selection: $viewModel.selection)
+                    .navigationSplitViewColumnWidth(150)
+            } detail: {
+                NavigationStack(path: $settingsNavigationPath) {
+                    viewModel.selection.contentView
+                        .navigationTitle(viewModel.selection.title)
+                }
+                .environment(\.cardConfigurationVersion, cardConfigurationVersion)
+                .environment(\.settingsNavigationPath, $settingsNavigationPath)
+                .navigationSplitViewColumnWidth(650)
             }
-            .environment(\.cardConfigurationVersion, cardConfigurationVersion)
-            .environment(\.settingsNavigationPath, $settingsNavigationPath)
-            .navigationSplitViewColumnWidth(650)
         }
+    }
+
+    public var body: some View {
+        splitView
         .frame(minHeight: Variant.screenshotMode ? 0 : 500)
         .background(WindowAccessor { window in
             guard Variant.screenshotMode, !didConfigureScreenshotWindow, let window else { return }
@@ -98,6 +110,7 @@ public struct MainView: View {
         .alert($viewModel.alert)
         .globalChecks()
         .toolbar {
+            if !Variant.useLocalEngine {
             if environments.remoteServer != nil || !remoteServers.isEmpty {
                 ToolbarItem(placement: .navigation) {
                     remoteControlPicker
@@ -120,6 +133,7 @@ public struct MainView: View {
                         Label("Dashboard Items", systemImage: "square.grid.2x2")
                     }
                 }
+            }
             }
         }
         .onChangeCompat(of: controlActiveState) { newValue in
