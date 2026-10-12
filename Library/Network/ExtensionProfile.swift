@@ -16,6 +16,18 @@ public class ExtensionProfile: ObservableObject {
     private var connection: NEVPNConnection?
     private var observer: Any?
     private let isMock: Bool
+    private var enginePollTask: Task<Void, Never>?
+    @Published public private(set) var localEngineError: String?
+    @Published public private(set) var localEngineStateUnknown = false
+    @Published public private(set) var localEngineNetworkEpoch: Int64 = 0
+
+    #if os(macOS)
+    private init(localEngine: Bool) {
+        manager = nil; connection = nil; isMock = false
+        status = .disconnected; connectedDate = nil
+    }
+    private static var localEngineProfile: ExtensionProfile?
+    #endif
 
     @Published public var status: NEVPNStatus
     @Published public var connectedDate: Date?
@@ -46,6 +58,38 @@ public class ExtensionProfile: ObservableObject {
     }
 
     public func register() {
+        #if os(macOS)
+        if Variant.useLocalEngine {
+            guard enginePollTask == nil else { return }
+            enginePollTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    let result = await Task.detached { Result { try LocalEngine.state() } }.value
+                    guard let self else { return }
+                    switch result {
+                    case .success(let value):
+                        localEngineStateUnknown = false
+                        localEngineNetworkEpoch = value.networkEpoch
+                        let next: NEVPNStatus
+                        switch value.state {
+                        case 1: next = .connecting
+                        case 2: next = .connected
+                        case 3: next = .disconnecting
+                        default: next = .disconnected
+                        }
+                        if status != next { status = next; connectedDate = next == .connected ? Date() : nil }
+                        localEngineError = value.error.isEmpty ? nil : value.error
+                    case .failure(let error):
+                        localEngineStateUnknown = true
+                        localEngineError = error.localizedDescription
+                        // RPC failure cannot confirm that the privileged tunnel stopped.
+                        status = .reasserting
+                    }
+                    try? await Task.sleep(nanoseconds: NSEC_PER_SEC)
+                }
+            }
+            return
+        }
+        #endif
         guard !isMock, let manager else { return }
         observer = NotificationCenter.default.addObserver(
             forName: NSNotification.Name.NEVPNStatusDidChange,
@@ -173,11 +217,22 @@ public class ExtensionProfile: ObservableObject {
 
     @available(iOS 16.0, macOS 13.0, tvOS 17.0, *)
     public func fetchLastDisconnectError() async throws {
+        if let localEngineError, !localEngineError.isEmpty { throw NSError(domain: "LocalEngine", code: 1, userInfo: [NSLocalizedDescriptionKey: localEngineError]) }
         guard let connection else { return }
         try await connection.fetchLastDisconnectError()
     }
 
     public func start() async throws {
+        #if os(macOS)
+        if Variant.useLocalEngine {
+            let options = try await prepareStartOptions()
+            guard let config = options["configContent"] as? String else { return }
+            status = .connecting
+            do { try await Task.detached { try LocalEngine.start(config) }.value }
+            catch { status = .reasserting; localEngineStateUnknown = true; localEngineError = error.localizedDescription; throw error }
+            return
+        }
+        #endif
         if isMock {
             status = .connecting
             try await Task.sleep(nanoseconds: 500_000_000)
@@ -207,6 +262,9 @@ public class ExtensionProfile: ObservableObject {
     }
 
     public func reloadService() async throws {
+        #if os(macOS)
+        if Variant.useLocalEngine { try await start(); return }
+        #endif
         if isMock {
             return
         }
@@ -281,6 +339,15 @@ public class ExtensionProfile: ObservableObject {
     }
 
     public func stop() async throws {
+        #if os(macOS)
+        if Variant.useLocalEngine {
+            status = .disconnecting
+            do { try await Task.detached { try LocalEngine.stop() }.value }
+            catch { status = .disconnected; throw error }
+            status = .disconnected; connectedDate = nil
+            return
+        }
+        #endif
         if isMock {
             status = .disconnecting
             try await Task.sleep(nanoseconds: 300_000_000)
@@ -322,6 +389,12 @@ public class ExtensionProfile: ObservableObject {
     }
 
     public static func load() async throws -> ExtensionProfile? {
+        #if os(macOS)
+        if Variant.useLocalEngine {
+            if localEngineProfile == nil { localEngineProfile = ExtensionProfile(localEngine: true) }
+            return localEngineProfile
+        }
+        #endif
         let managers = try await NETunnelProviderManager.loadAllFromPreferences()
         if managers.isEmpty {
             return nil

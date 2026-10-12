@@ -115,13 +115,16 @@ public final class OpenConnectStatusViewModel: BaseViewModel {
 
     private static let minAPIVersionOpenConnect: Int32 = 3
 
+    private var subscriptionGeneration: UInt64 = 0
     private var statusSubscription: LibboxOpenConnectStatusSubscription?
 
     public func subscribe() {
         guard !isSubscribed else { return }
         isSubscribed = true
+        subscriptionGeneration &+= 1
+        let generation = subscriptionGeneration
 
-        let handler = StatusHandler(self)
+        let handler = StatusHandler(self, generation: generation)
         Task { [weak self] in
             do {
                 let subscription = try await Task.detached { () -> LibboxOpenConnectStatusSubscription? in
@@ -131,7 +134,10 @@ public final class OpenConnectStatusViewModel: BaseViewModel {
                     guard apiVersion >= Self.minAPIVersionOpenConnect else { return nil }
                     return try client.subscribeOpenConnectStatus(handler)
                 }.value
-                guard let self else { return }
+                guard let self, self.subscriptionGeneration == generation, self.isSubscribed else {
+                    try? subscription?.close()
+                    return
+                }
                 guard let subscription else {
                     self.isSubscribed = false
                     self.endpoints = []
@@ -139,7 +145,7 @@ public final class OpenConnectStatusViewModel: BaseViewModel {
                 }
                 self.statusSubscription = subscription
             } catch {
-                guard let self else { return }
+                guard let self, self.subscriptionGeneration == generation else { return }
                 self.isSubscribed = false
                 self.endpoints = []
             }
@@ -147,6 +153,7 @@ public final class OpenConnectStatusViewModel: BaseViewModel {
     }
 
     public func cancel() {
+        subscriptionGeneration &+= 1
         try? statusSubscription?.close()
         statusSubscription = nil
         isSubscribed = false
@@ -234,23 +241,25 @@ public final class OpenConnectStatusViewModel: BaseViewModel {
 
     private final class StatusHandler: NSObject, LibboxOpenConnectStatusHandlerProtocol, @unchecked Sendable {
         private weak var viewModel: OpenConnectStatusViewModel?
+        private let generation: UInt64
 
-        init(_ viewModel: OpenConnectStatusViewModel?) {
+        init(_ viewModel: OpenConnectStatusViewModel?, generation: UInt64) {
             self.viewModel = viewModel
+            self.generation = generation
         }
 
         func onStatusUpdate(_ status: LibboxOpenConnectStatusUpdate?) {
             guard let status else { return }
             let endpoints = Self.convertUpdate(status)
             DispatchQueue.main.async { [self] in
-                guard let viewModel, viewModel.isSubscribed else { return }
+                guard let viewModel, viewModel.isSubscribed, viewModel.subscriptionGeneration == generation else { return }
                 viewModel.endpoints = endpoints
             }
         }
 
         func onError(_ message: String?) {
             DispatchQueue.main.async { [self] in
-                guard let viewModel, viewModel.isSubscribed else { return }
+                guard let viewModel, viewModel.isSubscribed, viewModel.subscriptionGeneration == generation else { return }
                 viewModel.isSubscribed = false
                 viewModel.statusSubscription = nil
                 viewModel.endpoints = []

@@ -4,7 +4,12 @@ public enum FilePath {
     public static let packageName = AppConfiguration.packageName
     public static let groupName = AppConfiguration.appGroupID
 
-    private static let defaultSharedDirectory: URL! = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupName)
+    private static let defaultSharedDirectory: URL! = {
+        if Variant.useLocalEngine {
+            return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/SFMRoutes/User", isDirectory: true)
+        }
+        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupName)
+    }()
 
     #if os(iOS)
         public static let sharedDirectory = defaultSharedDirectory!

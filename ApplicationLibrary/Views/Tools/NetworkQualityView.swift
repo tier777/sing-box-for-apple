@@ -7,7 +7,11 @@ public struct NetworkQualityView: View {
     @EnvironmentObject private var environments: ExtensionEnvironments
     @StateObject private var viewModel = NetworkQualityViewModel()
 
-    public init() {}
+    public init(outboundTag: String = "") {
+        let model = NetworkQualityViewModel()
+        model.selectedOutbound = outboundTag
+        _viewModel = StateObject(wrappedValue: model)
+    }
 
     private var downloadActive: Bool {
         (viewModel.isRunning && !viewModel.serial && viewModel.phase >= LibboxNetworkQualityPhaseDownload && viewModel.phase < LibboxNetworkQualityPhaseDone)

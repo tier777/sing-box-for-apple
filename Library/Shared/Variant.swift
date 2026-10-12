@@ -2,6 +2,11 @@ import Foundation
 import Libbox
 
 public enum Variant {
+    #if os(macOS) && LOCAL_ENGINE
+        public static let useLocalEngine = true
+    #else
+        public static let useLocalEngine = false
+    #endif
     #if os(macOS)
         public static var useSystemExtension = false
     #else

@@ -100,6 +100,7 @@ public class CommandClient: ObservableObject {
     @Published public var isConnected: Bool
     @Published public private(set) var isReconnecting = false
     @Published public private(set) var startedAt: Date?
+    @Published public private(set) var lastStatusAt: Date?
     @Published public var lastError: String?
     // Coalesce traffic updates so SwiftUI re-renders once per status tick.
     @Published private var trafficSnapshot = TrafficSnapshot()
@@ -187,6 +188,17 @@ public class CommandClient: ObservableObject {
         startConnection()
     }
 
+    /// Reconnect only the monitoring channel. Does not stop or restart the VPN.
+    public func reconnect() {
+        guard !suspended else { return }
+        closeConnection()
+        isConnected = false
+        lastStatusAt = nil
+        trafficSnapshot = TrafficSnapshot()
+        isReconnecting = true
+        startConnection()
+    }
+
     private func startConnection() {
         if let commandClient {
             try? commandClient.disconnect()
@@ -208,6 +220,8 @@ public class CommandClient: ObservableObject {
             isConnected = false
         }
         startedAt = nil
+        lastStatusAt = nil
+        trafficSnapshot = TrafficSnapshot()
     }
 
     private func closeConnection() {
@@ -430,6 +444,8 @@ public class CommandClient: ObservableObject {
                 commandClient.isConnected = false
                 commandClient.isReconnecting = false
                 commandClient.startedAt = nil
+                commandClient.lastStatusAt = nil
+                commandClient.trafficSnapshot = TrafficSnapshot()
             }
             if let message {
                 logger.debug("client disconnected: \(message)")
@@ -500,6 +516,7 @@ public class CommandClient: ObservableObject {
                     snapshot.downlinkHistory.append(CGFloat(message.downlink))
                 }
                 commandClient.trafficSnapshot = snapshot
+                commandClient.lastStatusAt = message == nil ? nil : Date()
             }
         }
 

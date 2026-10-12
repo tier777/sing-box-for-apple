@@ -1,5 +1,6 @@
 /.idea/
 /Libbox.xcframework/
+/Libbox.xcframework
 xcuserdata/
 .DS_Store
 /build/
@@ -14,3 +15,8 @@ AGENTS.md
 /fastlane/test_output/
 /fastlane/.bundle/
 /fastlane/.cache/
+
+/.sfm-local.xcodeproj/
+
+/.build/
+/build/

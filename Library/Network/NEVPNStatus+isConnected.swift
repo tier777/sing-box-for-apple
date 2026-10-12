@@ -40,7 +40,7 @@ public extension NEVPNStatus {
 
     var isConnectedStrict: Bool {
         switch self {
-        case .connected, .reasserting:
+        case .connected:
             return true
         default:
             return false

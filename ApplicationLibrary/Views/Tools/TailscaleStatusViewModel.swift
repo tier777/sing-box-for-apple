@@ -76,21 +76,28 @@ public final class TailscaleStatusViewModel: BaseViewModel {
 
     public weak var peerStore: TailscaleSSHPeerStore?
     public weak var environments: ExtensionEnvironments?
+    private var subscriptionGeneration: UInt64 = 0
     private var statusSubscription: LibboxTailscaleStatusSubscription?
 
     public func subscribe() {
         guard !isSubscribed else { return }
         isSubscribed = true
+        subscriptionGeneration &+= 1
+        let generation = subscriptionGeneration
 
-        let handler = StatusHandler(self)
+        let handler = StatusHandler(self, generation: generation)
         Task { [weak self] in
             do {
                 let subscription = try await Task.detached {
                     try CommandTarget.standaloneClient().subscribeTailscaleStatus(handler)
                 }.value
-                self?.statusSubscription = subscription
+                guard let self, self.subscriptionGeneration == generation, self.isSubscribed else {
+                    try? subscription.close()
+                    return
+                }
+                self.statusSubscription = subscription
             } catch {
-                guard let self else { return }
+                guard let self, self.subscriptionGeneration == generation else { return }
                 self.isSubscribed = false
                 self.endpoints = []
             }
@@ -98,6 +105,7 @@ public final class TailscaleStatusViewModel: BaseViewModel {
     }
 
     public func cancel() {
+        subscriptionGeneration &+= 1
         try? statusSubscription?.close()
         statusSubscription = nil
         isSubscribed = false
@@ -160,16 +168,18 @@ public final class TailscaleStatusViewModel: BaseViewModel {
 
     private final class StatusHandler: NSObject, LibboxTailscaleStatusHandlerProtocol, @unchecked Sendable {
         private weak var viewModel: TailscaleStatusViewModel?
+        private let generation: UInt64
 
-        init(_ viewModel: TailscaleStatusViewModel?) {
+        init(_ viewModel: TailscaleStatusViewModel?, generation: UInt64) {
             self.viewModel = viewModel
+            self.generation = generation
         }
 
         func onStatusUpdate(_ status: LibboxTailscaleStatusUpdate?) {
             guard let status else { return }
             let endpoints = Self.convertUpdate(status)
             DispatchQueue.main.async { [self] in
-                guard let viewModel, viewModel.isSubscribed else { return }
+                guard let viewModel, viewModel.isSubscribed, viewModel.subscriptionGeneration == generation else { return }
                 viewModel.endpoints = endpoints
                 viewModel.updateSSHPeersOnService(endpoints)
                 viewModel.setUnreadCount(endpoints.reduce(0) { $0 + Int($1.unreadFileCount) })
@@ -178,7 +188,7 @@ public final class TailscaleStatusViewModel: BaseViewModel {
 
         func onError(_ message: String?) {
             DispatchQueue.main.async { [self] in
-                guard let viewModel, viewModel.isSubscribed else { return }
+                guard let viewModel, viewModel.isSubscribed, viewModel.subscriptionGeneration == generation else { return }
                 viewModel.isSubscribed = false
                 viewModel.statusSubscription = nil
                 viewModel.endpoints = []
