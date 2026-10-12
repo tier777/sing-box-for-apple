@@ -6,8 +6,9 @@ import MacLibrary
 
 class StandaloneApplicationDelegate: ApplicationDelegate {
     func applicationWillFinishLaunching(_: Notification) {
-        Variant.useSystemExtension = true
-        LibboxSetXPCDialer(CommandXPCDialer.shared)
+        Variant.useSystemExtension = !Variant.useLocalEngine
+        if !Variant.useLocalEngine { LibboxSetXPCDialer(CommandXPCDialer.shared) }
+        guard !Variant.useLocalEngine else { return }
         Task {
             await setupSystemExtension()
             await HelperServiceManager.updateRootHelperIfNeeded()

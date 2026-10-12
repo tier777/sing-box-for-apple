@@ -363,6 +363,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
     }
 
     override open func sleep() async {
+        reasserting = true
         if let commandServer {
             commandServer.pause()
         }
@@ -372,5 +373,8 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         if let commandServer {
             commandServer.wake()
         }
+        // Endpoint checks in the app stay unknown until traffic is verified.
+        // NE status describes the packet tunnel lifecycle, not VPN health.
+        reasserting = false
     }
 }

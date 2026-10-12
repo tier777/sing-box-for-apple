@@ -5,6 +5,12 @@ public enum ServiceSetup {
     public static func apply(crashReportSource: String) throws {
         let options = LibboxSetupOptions()
         options.basePath = FilePath.sharedDirectory.relativePath
+        #if os(macOS)
+        if Variant.useLocalEngine {
+            try FileManager.default.createDirectory(at: FilePath.sharedDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            options.basePath = LocalEngine.socketDirectory.path
+        }
+        #endif
         options.workingPath = FilePath.workingDirectory.relativePath
         options.tempPath = FilePath.cacheDirectory.relativePath
         options.crashReportSource = crashReportSource

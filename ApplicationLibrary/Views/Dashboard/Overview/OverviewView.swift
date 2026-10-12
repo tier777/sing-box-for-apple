@@ -35,13 +35,17 @@ public struct OverviewView: View {
                 ProgressView()
             } else {
                 ScrollView {
-                    cardGrid
-                        .padding()
+                    VStack(spacing: 20) {
+                        #if os(macOS)
+                        RouteHealthPanel()
+                        #endif
+                        cardGrid
+                            .disabled(!Variant.screenshotMode && (!profile.status.isSwitchable || coordinator.reasserting))
+                    }.padding()
                 }
             }
         }
         .alert($coordinator.alert)
-        .disabled(!Variant.screenshotMode && (!profile.status.isSwitchable || coordinator.reasserting))
     }
 
     @ViewBuilder

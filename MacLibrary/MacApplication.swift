@@ -29,6 +29,7 @@ public struct MacApplication: Scene {
     @ObservedObject private var applicationState: MacApplicationState
     @StateObject private var peerStore = TailscaleSSHPeerStore()
     @StateObject private var tailscaleViewModel = TailscaleStatusViewModel()
+    @StateObject private var routeHealth = RouteHealthViewModel()
     @StateObject private var taildropSendManager = TaildropSendManager()
     @StateObject private var taildropInbox = TaildropInboxViewModel()
     @StateObject private var updateManager = UpdateManager()
@@ -43,11 +44,12 @@ public struct MacApplication: Scene {
     }
 
     public var body: some Scene {
-        Window("sing-box", id: "main", content: {
+        Window(Variant.useLocalEngine ? "SFM Routes" : "sing-box", id: "main", content: {
             MainView()
                 .onAppear {
                     Task {
                         await initialize()
+                        routeHealth.start(environments: applicationState.environments, tailscale: tailscaleViewModel)
                     }
                 }
                 .environment(\.showMenuBarExtra, $applicationState.showMenuBarExtra)
@@ -56,6 +58,7 @@ public struct MacApplication: Scene {
                 .environmentObject(applicationState.environments)
                 .environmentObject(peerStore)
                 .environmentObject(tailscaleViewModel)
+                .environmentObject(routeHealth)
                 .environmentObject(taildropSendManager)
                 .environmentObject(taildropInbox)
                 .environmentObject(updateManager)
