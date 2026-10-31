@@ -1,4 +1,4 @@
-# SFM Routes
+# SFM+
 
 Local macOS arm64 fork of SFM 1.14.3 with separate, fresh route-health checks.
 The regular Network Extension targets remain in the upstream project. The
@@ -24,34 +24,81 @@ provisioning profile. It is ad-hoc signed, not a notarized public release.
   username when omitted, and accept visible text/number/tel OTP input. Real
   gateway sessions still require login and each server-requested OTP.
 
+## Protected Tailscale exit selection
+
+In SFM+, open the Tailscale connection → **Вход и путь до узла…** → **Exit Node**.
+Only online, unexpired exit candidates are selectable; the local build has no
+"Disabled" choice. An active kill switch and a responsive, matching helper are
+required. Selection saves `exit_node: "id:<stable-peer-id>"` in the local profile
+and reloads the VPN under protection. Existing engine sockets close; there is
+no automatic rollback to the old exit if the replacement fails. Other routing
+rules and endpoint credentials remain unchanged.
+
+The core accepts both the original IP/name form and the stable identity form.
+A configured exit cannot be changed/disabled using the legacy live preference
+RPC; it requires profile replacement. Internet dials and raw TUN packets are
+checked against the live peer routing source used by WireGuard: until the
+configured peer identity is resolved and that peer carries the destination,
+they are rejected/dropped. Tailnet peer addresses remain allowed inside Tailscale.
+There is no DIRECT or another VPN alternative. This source-level behavior and
+failure cases have local tests; actual switching on the Mac still requires a
+live test after installation, without Claude/Anthropic requests.
+
 ## Leak protection
 
-On by default (Settings › VPN, or Overview › Routing). Starting a profile arms
-it; only switching the VPN off by hand disarms it. While armed, a pf anchor
-`com.apple/050.SFMRoutes` lets the controlling user's processes and
-`_mdnsresponder` send TCP/UDP only through the engine's own TUN interface and
-the on-link local network (DHCP, link-local, multicast, the Wi-Fi subnet).
-The root engine is not restricted, so it keeps reaching its servers and the
-DIRECT outbound for `.ru` and other direct rules.
+On by default (Settings › VPN, or Overview › Routing). The first profile start
+arms protection. Stopping VPN by hand keeps it armed; only the separate
+**Kill switch** toggle releases it. Enabling that toggle while VPN is stopped
+blocks immediately. The pf anchor `com.apple/050.SFMRoutes` allows TCP/UDP
+from the controlling user's processes and `_mdnsresponder` through the actual
+TUN device owned by this engine, plus the on-link local network. The root
+engine remains able to reach its servers and honor DIRECT rules such as `.ru`.
 
-Engine failure, reload, profile switch, sleep/wake and a helper crash or
-reinstall all keep it armed: without a live tunnel the user's traffic and DNS
-are blocked instead of falling back to Wi-Fi or another VPN (for example the
-regular Tailscale or FortiClient apps, whose `utun` interfaces are never
-allowed). The rules live in the kernel, so they outlast the helper; a
-restarted helper re-applies the block and restores the last armed profile
-from its root-only state directory. The window shows "Интернет приостановлен"
-with a button to switch the VPN off.
+Before stop, reload or profile replacement, blocking rules are loaded before
+the old tunnel is removed. The periodic reconciler cannot undo that transition.
+The allowed device comes from the running TUN instance, never a coincidentally
+matching IP on another VPN. If device identification fails, traffic stays blocked.
+Pass rules create no floating PF states; first arming clears pre-existing states
+originating from this Mac's concrete interface addresses. This can reconnect
+existing sockets. Other hosts' states are not flushed.
 
-Limits: it does not cover other macOS user accounts or root/system daemons,
-traffic before the helper starts at boot, or DNS names the system resolver
-sends to a router on the local network while the tunnel is up (connections
-still go through the tunnel). `uninstall-local-engine.sh` removes the anchor
-and the pf reference.
+The rules outlast a helper crash. At boot/restart the root helper restores the
+block before restoring a previously active profile. A deliberate stop clears
+the remembered profile, so helper restart keeps blocking without reconnecting.
+There is a boot window before the helper starts; this is not a macOS managed
+Always On VPN. Other accounts and root/system daemons are outside the guard.
+LAN stays available; with VPN stopped, ordinary DNS/DoT ports are blocked even
+to LAN resolvers. With VPN running a LAN resolver can still see DNS queries.
+
+The policy blocks external VPN interfaces, including a separate FortiClient.
+The personal setup instead has one saved profile and an optional **Рабочий VPN ·
+Fortinet** switch. It is off by default. With it off, the app produces a runtime
+configuration with no OpenConnect client; work traffic and work DNS rules reject
+in place, ahead of `.ru` and the default route. Dependent selectors are removed,
+including selectors containing DIRECT, so disabled work never chooses an alternative.
+The saved profile remains intact. With it on, the original endpoint and strict
+work rules are restored, and the user completes Fortinet password/SMS authentication.
+No work password or session cookie is stored in the staged profile. Toggling this
+module reloads the complete profile; active leak protection covers that interruption.
+If the helper's state is unknown, the UI refuses to report a successful toggle.
+
+Application launch at login uses native `SMAppService`, is registered on first
+launch, and has a separate Settings toggle. At login SFM+ connects the selected
+profile if the helper is not already running it.
+
+The main window shows **Интернет заблокирован** when no allowed tunnel exists.
+Use the VPN switch to reconnect, or **Отключить kill switch** to release the block.
+Settings also provides **Аварийно отключить kill switch…** if the service cannot
+answer: after macOS administrator authorization it stops this helper, removes
+only its own anchor and PF reference, persists protection as disabled and restarts
+the helper idle. It never disables global PF or flushes another tool's rules.
+The installer parses both rule modes using `pfctl -n` before replacing a helper;
+a parse failure leaves the old service running. Existing nonempty global PF
+rules without the Apple attachment anchor are refused, not overwritten.
 
 ## Local installation
 
-Open **SFM Routes.app**, press **Настроить локальный движок** and complete the
+Open **SFM+.app**, press **Настроить локальный движок** and complete the
 standard macOS administrator prompt. The installer creates an **idle** helper;
 it does not start a tunnel, change DNS/routes, or stop other VPN apps. Start a
 profile explicitly. Existing SFM is a separate application and data store.
@@ -81,8 +128,11 @@ Open action for a locally built, unnotarized app.
 
 ## Build
 
-Use the matching `feature/connection-health` core branch in
-https://github.com/tier777/sing-box and this app branch. Core's go.mod pins the
+Use the matching `feature/leak-protection` core branch in
+https://github.com/tier777/sing-box with this app's `feature/redesign-leak-protection`
+branch. The SFM+ implementation pairs with core commit
+[`c23b4f4d`](https://github.com/tier777/sing-box/commit/c23b4f4d970415d46b37a50b99c23155e0a217df).
+Core's go.mod pins the
 OTP fix from https://github.com/tier777/sing-openconnect. Xcode/Go dependencies
 follow upstream. Build Libbox for macOS arm64 with upstream `build_libbox`, then
 symlink its `Libbox.xcframework` into this repository.
@@ -132,5 +182,6 @@ processing, and `detour` configures its dialer/HTTP client, so TCP relay/control
 paths can travel through another proxy. UDP peer paths can differ. Compare
 per-route measurements and direct/DERP ping before changing transport settings.
 SSID matching is unavailable in the current local CLI backend: upstream macOS
-uses a stub Wi-Fi monitor without the Network Extension adapter. Use separate
-office/outside-office profiles to switch both routing and work DNS explicitly.
+uses a stub Wi-Fi monitor without the Network Extension adapter. The unified
+personal profile does not depend on SSID detection and always pins work addresses
+to Fortinet while its optional module is enabled.

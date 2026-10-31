@@ -67,6 +67,8 @@ public enum SharedPreferences {
         public static let menuBarExtraInBackground = Preference<Bool>("menu_bar_extra_in_background", defaultValue: false)
         public static let menuBarExtraSpeedMode = Preference<Int>("menu_bar_extra_speed_mode_1", defaultValue: MenuBarExtraSpeedMode.enabled.rawValue)
         public static let startedByUser = Preference<Bool>("started_by_user", defaultValue: false)
+        public static let localLoginItemConfigured = Preference<Bool>("local_login_item_configured", defaultValue: false)
+        public static let localWorkVPNEnabled = Preference<Bool>("local_work_vpn_enabled", defaultValue: false)
         public static let rootHelperPromptPending = Preference<Bool>("root_helper_prompt_pending", defaultValue: false)
 
         public static func resetMacOS() async {

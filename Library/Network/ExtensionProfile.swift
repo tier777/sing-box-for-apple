@@ -226,7 +226,9 @@ public class ExtensionProfile: ObservableObject {
         #if os(macOS)
         if Variant.useLocalEngine {
             let options = try await prepareStartOptions()
-            guard let config = options["configContent"] as? String else { return }
+            guard let savedConfig = options["configContent"] as? String else { return }
+            let workEnabled = await SharedPreferences.localWorkVPNEnabled.get()
+            let config = try WorkVPNConfiguration.runtime(savedConfig, enabled: workEnabled)
             status = .connecting
             do { try await Task.detached { try LocalEngine.start(config) }.value }
             catch { status = .reasserting; localEngineStateUnknown = true; localEngineError = error.localizedDescription; throw error }
@@ -377,8 +379,8 @@ public class ExtensionProfile: ObservableObject {
 
     public func restart() async throws {
         #if os(macOS)
-        // Stop is the user's "VPN off" and disarms leak protection; a restart
-        // must replace the running profile in place instead.
+        // Replace the running profile in place; the helper keeps protection
+        // armed throughout both reloads and explicit stops.
         if Variant.useLocalEngine { try await start(); return }
         #endif
         try await stop()

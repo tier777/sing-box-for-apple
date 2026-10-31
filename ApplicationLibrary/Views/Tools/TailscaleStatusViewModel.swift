@@ -73,6 +73,7 @@ public struct TailscaleEndpointData: Identifiable {
 public final class TailscaleStatusViewModel: BaseViewModel {
     @Published public var endpoints: [TailscaleEndpointData] = []
     @Published public var isSubscribed = false
+    @Published public private(set) var exitNodeUpdating = false
 
     public weak var peerStore: TailscaleSSHPeerStore?
     public weak var environments: ExtensionEnvironments?
@@ -124,13 +125,48 @@ public final class TailscaleStatusViewModel: BaseViewModel {
         endpoints.first { $0.endpointTag == tag }
     }
 
-    public func setExitNode(endpointTag: String, stableID: String) async {
+    public func setExitNode(endpointTag: String, stableID: String) async -> Bool {
+        guard !exitNodeUpdating else { return false }
+        exitNodeUpdating = true
+        defer { exitNodeUpdating = false }
         do {
+            #if os(macOS)
+            if Variant.useLocalEngine {
+                let protection = try await Task.detached { try LocalEngine.leakProtection() }.value
+                guard protection.enabled, protection.armed, protection.error.isEmpty else {
+                    throw NSError(domain: "TailscaleExit", code: 1, userInfo: [NSLocalizedDescriptionKey: "Перед сменой exit node включите kill switch и дождитесь готовности защиты."])
+                }
+                guard LocalEngine.isCurrentVersion,
+                      let state = environments?.extensionProfile, !state.localEngineStateUnknown, state.status == .connected,
+                      let peer = endpoint(tag: endpointTag)?.userGroups.flatMap(\.peers).first(where: { $0.stableID == stableID }),
+                      peer.exitNodeOption, peer.online, !peer.expired else {
+                    throw NSError(domain: "TailscaleExit", code: 1, userInfo: [NSLocalizedDescriptionKey: "Нужны обновлённый движок, работающий VPN и доступный exit node. Подключение не изменено."])
+                }
+                let id = await SharedPreferences.selectedProfileID.get()
+                guard let profile = try await ProfileManager.get(id), profile.type == .local else {
+                    throw NSError(domain: "TailscaleExit", code: 1, userInfo: [NSLocalizedDescriptionKey: "Сохраните профиль как локальный перед сменой exit node."])
+                }
+                let content = try await profile.readAsync()
+                let updated = try TailscaleExitConfiguration.selecting(stableID, endpointTag: endpointTag, in: content)
+                guard id == (await SharedPreferences.selectedProfileID.get()) else {
+                    throw NSError(domain: "TailscaleExit", code: 1, userInfo: [NSLocalizedDescriptionKey: "Выбранный профиль изменился; повторите выбор узла."])
+                }
+                try await profile.writeAsync(updated)
+                // Reload blocks before removing the old tunnel, closes its
+                // sockets and starts only the newly saved stable identity.
+                // Failure keeps that requested choice; never roll back to an old exit.
+                try await state.reloadService()
+                environments?.commandClient.reconnect()
+                return true
+            }
+            #endif
             try await Task.detached {
                 try CommandTarget.standaloneClient().setTailscaleExitNode(endpointTag, stableID: stableID)
             }.value
+            return true
         } catch {
             alert = AlertState(action: "set exit node", error: error)
+            return false
         }
     }
 

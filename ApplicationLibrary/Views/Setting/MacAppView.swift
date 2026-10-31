@@ -28,6 +28,7 @@ public struct AppView: View {
 
     #if os(macOS)
         @State private var startAtLogin = false
+        @State private var loginItemApprovalPending = false
         @Environment(\.showMenuBarExtra) private var showMenuBarExtra
         @Environment(\.menuBarExtraSpeedMode) private var menuBarExtraSpeedMode
         @State private var menuBarExtraInBackground = false
@@ -77,8 +78,20 @@ public struct AppView: View {
                     #endif
 
                     #if os(macOS)
-                        FormToggle("Start At Login", "Launch the application when the system is logged in. If enabled at the same time as `Show in Menu Bar` and `Keep Menu Bar in Background`, the application interface will not be opened automatically.", $startAtLogin) { newValue in
-                            updateLoginItems(newValue)
+                        if Variant.useLocalEngine {
+                            Toggle(isOn: Binding(get: { startAtLogin }, set: { updateLoginItems($0) })) {
+                                Text("Запускать SFM+ при входе в macOS")
+                                Text("Приложение откроется и подключит выбранный VPN. Фоновая служба восстанавливает активную защиту уже при загрузке Mac.")
+                            }
+                            if loginItemApprovalPending {
+                                Button("Разрешить автозапуск в настройках macOS…") {
+                                    SMAppService.openSystemSettingsLoginItems()
+                                }
+                            }
+                        } else {
+                            FormToggle("Start At Login", "Launch the application when the system is logged in. If enabled at the same time as `Show in Menu Bar` and `Keep Menu Bar in Background`, the application interface will not be opened automatically.", $startAtLogin) { newValue in
+                                updateLoginItems(newValue)
+                            }
                         }
 
                         Toggle("Show in Menu Bar", isOn: showMenuBarExtra)
@@ -348,7 +361,8 @@ public struct AppView: View {
     private func loadSettings() async {
         selectedLanguage = Self.currentLanguage()
         #if os(macOS)
-            startAtLogin = SMAppService.mainApp.status == .enabled
+            startAtLogin = SMAppService.mainApp.status == .enabled || SMAppService.mainApp.status == .requiresApproval
+            loginItemApprovalPending = SMAppService.mainApp.status == .requiresApproval
             menuBarExtraInBackground = await SharedPreferences.menuBarExtraInBackground.get()
             if Variant.useSystemExtension {
                 systemExtensionInstalled = await SystemExtension.isInstalled()
@@ -471,17 +485,18 @@ public struct AppView: View {
         private func updateLoginItems(_ startAtLogin: Bool) {
             do {
                 if startAtLogin {
-                    if SMAppService.mainApp.status == .enabled {
-                        try? SMAppService.mainApp.unregister()
-                    }
-
-                    try SMAppService.mainApp.register()
+                    if SMAppService.mainApp.status != .enabled { try SMAppService.mainApp.register() }
                 } else {
                     try SMAppService.mainApp.unregister()
+                }
+                if Variant.useLocalEngine {
+                    Task { await SharedPreferences.localLoginItemConfigured.set(true) }
                 }
             } catch {
                 alert = AlertState(action: "update login items", error: error)
             }
+            loginItemApprovalPending = SMAppService.mainApp.status == .requiresApproval
+            self.startAtLogin = SMAppService.mainApp.status == .enabled || SMAppService.mainApp.status == .requiresApproval
         }
 
         private func installSystemExtension() async {

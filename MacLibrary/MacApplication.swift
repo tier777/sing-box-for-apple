@@ -45,7 +45,7 @@ public struct MacApplication: Scene {
     }
 
     public var body: some Scene {
-        Window(Variant.useLocalEngine ? "SFM Routes" : "sing-box", id: "main", content: {
+        Window(Variant.useLocalEngine ? "SFM+" : "sing-box", id: "main", content: {
             MainView()
                 .onAppear {
                     Task {
@@ -105,7 +105,7 @@ public struct MacApplication: Scene {
         .commands {
             if applicationState.showMenuBarExtra {
                 CommandGroup(replacing: .appTermination) {
-                    Button("Quit sing-box") {
+                    Button(Variant.useLocalEngine ? "Выйти из SFM+" : "Quit sing-box") {
                         hide(closeApp: true)
                     }
                     .keyboardShortcut("q", modifiers: [.command])

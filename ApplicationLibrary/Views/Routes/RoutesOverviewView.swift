@@ -3,7 +3,7 @@ import Library
 import SwiftUI
 
 struct OverviewHeadline {
-    enum Action { case setupEngine, start, stop, ruleMode, open(String), login(String) }
+    enum Action { case setupEngine, start, stop, disableProtection, ruleMode, open(String), login(String) }
 
     let tier: ConnectionTier
     let title: String
@@ -21,10 +21,13 @@ extension RouteHealthViewModel {
             return OverviewHeadline(tier: .off, title: "Нужен локальный движок", subtitle: "Устанавливается один раз с паролем администратора. Сама установка VPN не включает.", actionTitle: installingEngine ? "Настраиваем…" : "Настроить…", action: .setupEngine)
         }
         if leakBlocking {
-            return OverviewHeadline(tier: .fail, title: "Интернет приостановлен", subtitle: "VPN сейчас не работает, и защита от утечек не выпускает трафик мимо него. Подождите, пока он восстановится, или выключите VPN.", actionTitle: "Выключить VPN", action: .stop)
+            return OverviewHeadline(tier: .fail, title: "Интернет заблокирован", subtitle: "Kill switch включён. Запустите VPN или отдельно отключите блокировку.", actionTitle: "Отключить kill switch", action: .disableProtection)
         }
         if !enabled {
-            return OverviewHeadline(tier: .off, title: "VPN выключен", subtitle: "Сайты открываются напрямую, правила не действуют.", actionTitle: "Включить", action: .start)
+            let subtitle = leakProtection?.enabled == true
+                ? "Kill switch включится при первом запуске VPN. Сейчас правила VPN не действуют."
+                : "Kill switch выключен. Приложения используют обычные сетевые маршруты."
+            return OverviewHeadline(tier: .off, title: "VPN выключен", subtitle: subtitle, actionTitle: "Включить VPN", action: .start)
         }
         if currentClashMode.lowercased() == "direct" {
             return OverviewHeadline(tier: .action, title: "Сайты идут мимо VPN", subtitle: "Включён режим «Напрямую».", actionTitle: "Вернуть правила", action: .ruleMode)
@@ -110,7 +113,7 @@ struct RoutesOverviewView: View {
                     Button(title) { perform(action) }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
-                        .disabled(model.installingEngine)
+                        .disabled(model.installingEngine || model.leakProtectionUpdating || model.workVPNUpdating || model.changingTailscaleExit)
                 }
             }
             .padding(.vertical, 6)
@@ -173,20 +176,34 @@ struct RoutesOverviewView: View {
 
     private var routingSection: some View {
         Section {
+            if model.workVPNAvailable {
+                Toggle(isOn: Binding(get: { model.workVPNEnabled }, set: { model.setWorkVPN($0) })) {
+                    Text("Рабочий VPN · Fortinet")
+                    Text(model.workVPNEnabled ? "Для доступа завершите вход в подключении Fortinet. При отказе рабочие адреса останутся заблокированы." : "Выключен. Рабочие адреса и их DNS заблокированы; личные маршруты сохраняются.")
+                }
+                .disabled(model.workVPNUpdating || model.installingEngine || model.changingTailscaleExit)
+                Text("Переключение перезапускает общий туннель. Включённый kill switch сохраняет блокировку на время перезапуска.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if model.engineOutdated {
                 LabeledContent {
                     Button(model.installingEngine ? "Обновляем…" : "Обновить движок…") { model.installEngine() }
                         .disabled(model.installingEngine)
                 } label: {
-                    Text("Защита от утечек")
+                    Text("Kill switch")
                     Text("Нужна новая версия движка. Работающий VPN выключится, затем включите его снова.")
                 }
             }
-                        if model.leakProtection?.supported == true {
+            if model.leakProtection?.supported == true {
                 Toggle(isOn: Binding(get: { model.leakProtection?.enabled ?? true }, set: { model.setLeakProtection($0) })) {
-                    Text("Защита от утечек")
-                    Text("Если VPN упал или перезапускается, трафик не уйдёт напрямую или через другой VPN")
+                    Text("Kill switch")
+                    Text("Блокирует интернет при сбое, перезапуске и ручном выключении VPN. Снимается отдельно этим переключателем.")
                 }
+                .disabled(model.leakProtectionUpdating || model.changingTailscaleExit)
+            }
+            if model.leakProtectionError != nil || !LocalEngine.isAvailable {
+                Button("Аварийно отключить kill switch…") { model.emergencyDisableProtection() }
+                    .disabled(model.leakProtectionUpdating)
             }
             let modes = environments.commandClient.clashModeList
             if model.enabled, modes.count > 1 {
@@ -197,6 +214,7 @@ struct RoutesOverviewView: View {
         } header: {
             Text("Маршрутизация")
         } footer: {
+            if let error = model.workVPNError { Text(error).foregroundStyle(.red) }
             if let error = model.leakProtectionError ?? model.leakProtection?.error, !error.isEmpty {
                 Text(error).foregroundStyle(.red)
             }

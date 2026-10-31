@@ -8,10 +8,10 @@ struct LeakProtectionSettingsSection: View {
     var body: some View {
         Section {
             Toggle(isOn: Binding(get: { model.leakProtection?.enabled ?? true }, set: { model.setLeakProtection($0) })) {
-                Text("Защита от утечек")
-                Text("Пока VPN включён, приложения выходят в интернет только через него. Если он упал, перезапускается или меняется профиль, интернет ненадолго пропадает, но трафик не уходит напрямую и через другой VPN.")
+                Text("Kill switch")
+                Text("Блокирует интернет при сбое, перезапуске и ручном выключении VPN. Чтобы вернуть обычные сетевые маршруты, отключите kill switch отдельно.")
             }
-            .disabled(model.leakProtection?.supported != true)
+            .disabled(model.leakProtection?.supported != true || model.leakProtectionUpdating || model.changingTailscaleExit)
             if model.engineOutdated {
                 LabeledContent {
                     Button(model.installingEngine ? "Обновляем…" : "Обновить движок…") { model.installEngine() }
@@ -26,6 +26,10 @@ struct LeakProtectionSettingsSection: View {
                     Text(protection.blocking ? "Трафик заблокирован до восстановления VPN" : "Трафик идёт только через \(protection.tunnel)")
                 }
             }
+            Button("Аварийно отключить kill switch…") { model.emergencyDisableProtection() }
+                .disabled(model.leakProtectionUpdating)
+            Text("Если фоновая служба не отвечает. Потребуется пароль администратора macOS; снимаются только правила SFM+.")
+                .font(.caption).foregroundStyle(.secondary)
         } header: {
             Text("VPN")
         } footer: {
@@ -34,7 +38,7 @@ struct LeakProtectionSettingsSection: View {
             } else if model.leakProtection?.supported != true, !model.engineOutdated {
                 Text("Доступна после настройки локального движка.")
             } else {
-                Text("Защита снимается только когда вы сами выключаете VPN. Локальная сеть (принтеры, роутер) доступна всегда.")
+                Text("Выключение VPN сохраняет блокировку. Переключатель kill switch снимает её. Локальная сеть (принтеры, роутер) остаётся доступна.")
             }
         }
     }

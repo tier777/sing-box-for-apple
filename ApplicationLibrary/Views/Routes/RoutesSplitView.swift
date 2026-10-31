@@ -132,6 +132,7 @@ public struct RoutesSplitView: View {
         ToolbarItem(placement: .primaryAction) {
             if let profile = environments.extensionProfile {
                 VPNSwitch(onError: { alert = $0 }).environmentObject(profile)
+                    .disabled(model.workVPNUpdating || model.changingTailscaleExit)
             }
         }
     }
@@ -141,6 +142,7 @@ public struct RoutesSplitView: View {
         case .setupEngine: model.installEngine()
         case .start: Task { await setVPN(true) }
         case .stop: Task { await setVPN(false) }
+        case .disableProtection: model.setLeakProtection(false)
         case .ruleMode: Task.detached { try? CommandTarget.standaloneClient().setClashMode("rule") }
         case let .open(tag): page = .connection(tag)
         case let .login(tag): loginTag = tag

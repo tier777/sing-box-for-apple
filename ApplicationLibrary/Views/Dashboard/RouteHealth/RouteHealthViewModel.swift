@@ -20,9 +20,14 @@ public final class RouteHealthViewModel: ObservableObject {
     @Published public var catalogError: String?
     @Published public var targets: [String: String] = [:]
     @Published public var installingEngine = false
+    @Published public private(set) var workVPNAvailable = false
+    @Published public private(set) var workVPNEnabled = false
+    @Published public private(set) var workVPNUpdating = false
+    @Published public private(set) var workVPNError: String?
     @Published public private(set) var leakProtection: LeakProtectionInfo?
     @Published public private(set) var leakProtectionError: String?
-    /// The installed helper predates leak protection and must be reinstalled.
+    @Published public private(set) var leakProtectionUpdating = false
+    /// A different helper may implement the old stop/disarm behavior.
     @Published public private(set) var engineOutdated = false
     private var lastLeakPoll = Date.distantPast
     public let openConnect = OpenConnectStatusViewModel()
@@ -47,6 +52,7 @@ public final class RouteHealthViewModel: ObservableObject {
         guard self.environments == nil else { return }
         self.environments = environments
         self.tailscale = tailscale
+        refreshWorkConfiguration()
         targets = UserDefaults.standard.dictionary(forKey: "route-health-targets") as? [String: String] ?? [:]
         openConnect.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         tailscale.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
@@ -63,7 +69,10 @@ public final class RouteHealthViewModel: ObservableObject {
             self?.updateEndpointSignatures(signatures, type: "openconnect")
         }.store(in: &subscriptions)
         environments.commandClient.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
-        environments.selectedProfileUpdate.sink { [weak self] _ in self?.invalidate("Профиль изменён — перепроверяем маршруты") }.store(in: &subscriptions)
+        environments.selectedProfileUpdate.sink { [weak self] _ in
+            self?.invalidate("Профиль изменён — перепроверяем маршруты")
+            self?.refreshWorkConfiguration()
+        }.store(in: &subscriptions)
         environments.commandClient.$isConnected.dropFirst().sink { [weak self] _ in self?.invalidate(nil) }.store(in: &subscriptions)
         environments.commandClient.$groups.dropFirst().sink { [weak self] groups in
             self?.updateEndpointSignatures(Dictionary(uniqueKeysWithValues: (groups ?? []).map { ($0.tag, $0.selected) }), type: "selection")
@@ -138,16 +147,71 @@ public final class RouteHealthViewModel: ObservableObject {
     }
 
     public func tailscaleModel() -> TailscaleStatusViewModel? { tailscale }
+    public var changingTailscaleExit: Bool { tailscale?.exitNodeUpdating == true }
+
+    private func refreshWorkConfiguration() {
+        #if os(macOS)
+        guard Variant.useLocalEngine else { return }
+        Task {
+            let id = await SharedPreferences.selectedProfileID.get()
+            do {
+                let profile = try await ProfileManager.get(id)
+                let content = try await profile?.readAsync() ?? "{}"
+                let available = try WorkVPNConfiguration.containsWorkVPN(content)
+                guard id == (await SharedPreferences.selectedProfileID.get()) else { return }
+                workVPNAvailable = available
+                workVPNEnabled = await SharedPreferences.localWorkVPNEnabled.get()
+                workVPNError = nil
+            } catch { workVPNError = error.localizedDescription }
+        }
+        #endif
+    }
+
+    public func setWorkVPN(_ value: Bool) {
+        #if os(macOS)
+        guard workVPNAvailable, !workVPNUpdating, !changingTailscaleExit, let profile = environments?.extensionProfile else { return }
+        guard !profile.localEngineStateUnknown, profile.status == .connected || profile.status == .disconnected else {
+            workVPNError = "Сначала дождитесь ответа движка или завершения подключения. Состояние рабочего VPN не изменено."
+            return
+        }
+        workVPNUpdating = true
+        Task {
+            defer { workVPNUpdating = false }
+            let previous = await SharedPreferences.localWorkVPNEnabled.get()
+            await SharedPreferences.localWorkVPNEnabled.set(value)
+            do {
+                guard await SharedPreferences.localWorkVPNEnabled.get() == value else {
+                    throw NSError(domain: "WorkVPN", code: 1, userInfo: [NSLocalizedDescriptionKey: "Не удалось сохранить состояние рабочего VPN. Подключения не изменены."])
+                }
+                if profile.status.isStarted {
+                    try await profile.reloadService()
+                    environments?.commandClient.reconnect()
+                    openConnect.cancel()
+                    tailscale?.cancel()
+                }
+                workVPNEnabled = value
+                workVPNError = nil
+                invalidate(value ? "Рабочий VPN включён — завершите вход в Fortinet" : "Рабочий VPN выключен; рабочие адреса заблокированы")
+            } catch {
+                await SharedPreferences.localWorkVPNEnabled.set(previous)
+                workVPNEnabled = await SharedPreferences.localWorkVPNEnabled.get()
+                workVPNError = error.localizedDescription
+            }
+        }
+        #endif
+    }
 
     private func pollLeakProtection(force: Bool = false) {
         #if os(macOS)
         guard Variant.useLocalEngine, LocalEngine.isAvailable, force || now.timeIntervalSince(lastLeakPoll) >= 2 else { return }
         lastLeakPoll = now
         Task {
-            let result = await Task.detached { Result { try LeakProtectionInfo(LocalEngine.leakProtection()) } }.value
+            let result = await Task.detached {
+                Result { (try LeakProtectionInfo(LocalEngine.leakProtection()), LocalEngine.isCurrentVersion) }
+            }.value
             switch result {
-            case let .success(value):
-                engineOutdated = false
+            case let .success((value, currentVersion)):
+                engineOutdated = !currentVersion
                 if leakProtection != value { leakProtection = value }
             case let .failure(error):
                 engineOutdated = "\(error)".contains("Unimplemented") || error.localizedDescription.contains("Unimplemented")
@@ -158,12 +222,38 @@ public final class RouteHealthViewModel: ObservableObject {
 
     public func setLeakProtection(_ enabled: Bool) {
         #if os(macOS)
+        guard !leakProtectionUpdating else { return }
+        leakProtectionUpdating = true
         Task {
+            defer { leakProtectionUpdating = false }
             let result = await Task.detached { Result { try LeakProtectionInfo(LocalEngine.setLeakProtection(enabled)) } }.value
             switch result {
             case let .success(value): leakProtection = value; leakProtectionError = nil
             case let .failure(error): leakProtectionError = error.localizedDescription; pollLeakProtection(force: true)
             }
+        }
+        #endif
+    }
+
+    public func emergencyDisableProtection() {
+        #if os(macOS)
+        guard !leakProtectionUpdating else { return }
+        leakProtectionUpdating = true
+        Task {
+            defer { leakProtectionUpdating = false }
+            do {
+                try await Task.detached { try LocalEngine.emergencyDisableProtection() }.value
+                leakProtection = nil
+                leakProtectionError = nil
+                for _ in 0..<10 {
+                    if let value = await Task.detached(operation: { try? LeakProtectionInfo(LocalEngine.leakProtection()) }).value {
+                        leakProtection = value
+                        return
+                    }
+                    try await Task.sleep(nanoseconds: NSEC_PER_SEC)
+                }
+                leakProtectionError = "Команда снятия блокировки выполнена, но фоновая служба не ответила. Установите движок заново."
+            } catch { leakProtectionError = error.localizedDescription }
         }
         #endif
     }
@@ -333,7 +423,7 @@ public final class RouteHealthViewModel: ObservableObject {
 public struct LeakProtectionInfo: Equatable, Sendable {
     public let supported: Bool
     public let enabled: Bool
-    // A profile was started and the user has not switched the VPN off.
+    // Protection is armed until the user separately disables the kill switch.
     public let armed: Bool
     // Armed without a working tunnel: the user's traffic is blocked.
     public let blocking: Bool

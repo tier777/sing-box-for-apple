@@ -3,6 +3,7 @@ import ApplicationLibrary
 import Foundation
 import Libbox
 import Library
+import ServiceManagement
 import UserNotifications
 
 @MainActor
@@ -42,6 +43,14 @@ open class ApplicationDelegate: NSObject, NSApplicationDelegate, UNUserNotificat
             event?.eventID == kAEOpenApplication &&
             event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
         Task {
+            if Variant.useLocalEngine, !(await SharedPreferences.localLoginItemConfigured.get()) {
+                do {
+                    try SMAppService.mainApp.register()
+                    await SharedPreferences.localLoginItemConfigured.set(true)
+                } catch {
+                    NSLog("SFM+ login item registration needs attention: \(error.localizedDescription)")
+                }
+            }
             let showMenuBarExtra = await SharedPreferences.showMenuBarExtra.get()
             let menuBarExtraInBackground = await SharedPreferences.menuBarExtraInBackground.get()
             let shouldShowWindow = Variant.screenshotMode ||
@@ -59,9 +68,15 @@ open class ApplicationDelegate: NSObject, NSApplicationDelegate, UNUserNotificat
             do {
                 try await ProfileUpdateTask.configure()
                 if launchedAsLogInItem {
-                    if await SharedPreferences.startedByUser.get() {
+                    let wasStartedByUser = await SharedPreferences.startedByUser.get()
+                    let shouldConnect = Variant.useLocalEngine || wasStartedByUser
+                    if shouldConnect {
                         if let profile = try await ExtensionProfile.load() {
-                            try await profile.start()
+                            var alreadyRunning = false
+                            if Variant.useLocalEngine {
+                                alreadyRunning = await Task.detached { (try? LocalEngine.state().state) == 2 }.value
+                            }
+                            if !alreadyRunning { try await profile.start() }
                         }
                     }
                 }

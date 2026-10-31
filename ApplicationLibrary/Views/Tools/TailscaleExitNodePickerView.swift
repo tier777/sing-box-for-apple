@@ -35,23 +35,25 @@ public struct TailscaleExitNodePickerView: View {
 
     public var body: some View {
         List {
-            Button {
-                select(stableID: "")
-            } label: {
-                HStack {
-                    Text("Disabled")
-                        .foregroundStyle(.foreground)
-                    Spacer()
-                    if endpoint?.exitNode == nil {
-                        Image(systemName: "checkmark")
-                            .foregroundStyle(Color.accentColor)
+            if !Variant.useLocalEngine {
+                Button {
+                    select(stableID: "")
+                } label: {
+                    HStack {
+                        Text("Disabled")
+                            .foregroundStyle(.foreground)
+                        Spacer()
+                        if endpoint?.exitNode == nil {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(Color.accentColor)
+                        }
                     }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                #if os(macOS)
+                .buttonStyle(.plain)
+                #endif
             }
-            #if os(macOS)
-            .buttonStyle(.plain)
-            #endif
 
             ForEach(Array(candidates.enumerated()), id: \.offset) { _, row in
                 Button {
@@ -82,6 +84,11 @@ public struct TailscaleExitNodePickerView: View {
                 #if os(macOS)
                 .buttonStyle(.plain)
                 #endif
+                .disabled(viewModel.exitNodeUpdating || (Variant.useLocalEngine && (!row.peer.online || row.peer.expired)))
+            }
+            if Variant.useLocalEngine {
+                Text("Выбор сохраняется в профиле. Для смены нужен включённый kill switch: он сохраняет блокировку при перезапуске VPN. Если выбранный узел недоступен, интернет через Tailscale не переходит на другой выход.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         #if os(iOS)
@@ -90,12 +97,12 @@ public struct TailscaleExitNodePickerView: View {
         .searchable(text: $searchText)
         #endif
         .navigationTitle("Exit Node")
+        .alert($viewModel.alert)
     }
 
     private func select(stableID: String) {
         Task {
-            await viewModel.setExitNode(endpointTag: endpointTag, stableID: stableID)
-            dismiss()
+            if await viewModel.setExitNode(endpointTag: endpointTag, stableID: stableID) { dismiss() }
         }
     }
 }
